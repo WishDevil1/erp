@@ -29,22 +29,15 @@ import de.metas.contracts.model.I_C_Flatrate_Term;
 import de.metas.contracts.model.I_ModCntr_Module;
 import de.metas.contracts.model.I_ModCntr_Settings;
 import de.metas.contracts.model.I_ModCntr_Type;
-import de.metas.contracts.modular.IModularContractTypeHandler;
-import de.metas.contracts.modular.ModelAction;
-import de.metas.contracts.modular.ModularContractHandlerType;
-import de.metas.contracts.modular.log.LogEntryContractType;
-import de.metas.javaclasses.model.I_AD_JavaClass;
-import de.metas.javaclasses.model.I_AD_JavaClass_Type;
-import lombok.NonNull;
 import org.adempiere.test.AdempiereTestHelper;
 import org.compiere.model.I_C_Calendar;
 import org.compiere.model.I_C_Year;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.stream.Stream;
+import java.sql.Timestamp;
 
-import static de.metas.contracts.modular.ModularContractHandlerType.INTERIM_CONTRACT;
+import static de.metas.contracts.modular.ComputingMethodType.INTERIM_CONTRACT;
 import static org.adempiere.model.InterfaceWrapperHelper.newInstance;
 import static org.adempiere.model.InterfaceWrapperHelper.saveRecord;
 import static org.assertj.core.api.Assertions.*;
@@ -72,8 +65,9 @@ class ModularContractSettingsDAOTest
 		settingsRecord.setC_Calendar(calendarRecord);
 		settingsRecord.setC_Year_ID(yearRecord.getC_Year_ID());
 		settingsRecord.setName("ModCntr_Settings");
-		settingsRecord.setM_Product_ID(30);
+		settingsRecord.setM_Raw_Product_ID(30);
 		settingsRecord.setM_PricingSystem_ID(40);
+		settingsRecord.setStorageCostStartDate(Timestamp.valueOf("2024-04-24 07:15:00"));
 		saveRecord(settingsRecord);
 
 		final I_ModCntr_Type typeRecord = newInstance(I_ModCntr_Type.class);
@@ -87,7 +81,7 @@ class ModularContractSettingsDAOTest
 		moduleRecord.setModCntr_Type_ID(typeRecord.getModCntr_Type_ID());
 		moduleRecord.setM_Product_ID(130);
 		moduleRecord.setSeqNo(10);
-		moduleRecord.setInvoicingGroup("invoicingGroup");
+		moduleRecord.setInvoicingGroup("Costs");
 		saveRecord(moduleRecord);
 
 		final I_C_Flatrate_Conditions conditionsRecord = newInstance(I_C_Flatrate_Conditions.class);
@@ -109,51 +103,6 @@ class ModularContractSettingsDAOTest
 		assertThat(moduleConfig.getSeqNo().toInt()).isEqualTo(10);
 		assertThat(moduleConfig.getProductId().getRepoId()).isEqualTo(130);
 
-		final ModularContractHandlerType handlerImpl = moduleConfig.getModularContractType().getHandlerType();
-		assertThat(handlerImpl).isEqualTo(INTERIM_CONTRACT);
-	}
-
-	public static class HandlerImpl implements IModularContractTypeHandler<Object>
-	{
-
-		@NonNull
-		@Override
-		public Class<Object> getType()
-		{
-			return Object.class;
-		}
-
-		@Override
-		public @NonNull Stream<FlatrateTermId> streamContractIds(@NonNull final Object model)
-		{
-			return Stream.empty();
-		}
-
-		@Override
-		public void validateAction(final @NonNull Object model, final @NonNull ModelAction action)
-		{
-			return;
-		}
-
-		@Override
-		public @NonNull ModularContractHandlerType getHandlerType()
-		{
-			return INTERIM_CONTRACT;
-		}
-
-		@Override
-		public boolean applies(final @NonNull Object model)
-		{
-			return true;
-		}
-
-		@Override
-		public boolean applies(final @NonNull LogEntryContractType logEntryContractType)
-		{
-			return logEntryContractType.isModularOrInterim();
-		}
-
-		@Override
-		public void createContractIfRequired(final @NonNull Object model) {}
+		assertThat(moduleConfig.getComputingMethodType()).isEqualTo(INTERIM_CONTRACT);
 	}
 }

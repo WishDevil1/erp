@@ -52,6 +52,7 @@ import de.metas.handlingunits.model.I_M_HU_PI_Item;
 import de.metas.handlingunits.model.I_M_HU_PI_Version;
 import de.metas.handlingunits.model.I_M_HU_PackingMaterial;
 import de.metas.handlingunits.model.I_M_HU_Storage;
+import de.metas.handlingunits.model.X_M_HU;
 import de.metas.handlingunits.model.X_M_HU_Item;
 import de.metas.handlingunits.model.X_M_HU_PI_Item;
 import de.metas.handlingunits.reservation.HUReservationRepository;
@@ -67,6 +68,7 @@ import org.adempiere.ad.dao.IQueryOrderBy.Nulls;
 import org.adempiere.ad.dao.impl.EqualsQueryFilter;
 import org.adempiere.ad.trx.api.ITrx;
 import org.adempiere.exceptions.AdempiereException;
+import org.adempiere.mm.attributes.api.AttributeConstants;
 import org.adempiere.model.InterfaceWrapperHelper;
 import org.adempiere.util.lang.IContextAware;
 import de.metas.common.util.pair.IPair;
@@ -91,9 +93,12 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.adempiere.model.InterfaceWrapperHelper.load;
 import static org.adempiere.model.InterfaceWrapperHelper.loadByRepoIdAwares;
@@ -292,6 +297,12 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 		return result;
 	}
 
+	@NonNull
+	public List<I_M_HU> retrieveIncludedHUs(@NonNull final HuId huId)
+	{
+		return retrieveIncludedHUs(getById(huId));
+	}
+
 	@Override
 	public I_M_HU_Item createHUItem(final I_M_HU hu, final I_M_HU_PI_Item piItem)
 	{
@@ -357,7 +368,7 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 	}
 
 	@Override
-	public List<I_M_HU_Item> retrieveItemsNoCache(final Collection<HuId> huIds)
+	public List<I_M_HU_Item> retrieveAllItemsNoCache(final Collection<HuId> huIds)
 	{
 		if (huIds.isEmpty())
 		{
@@ -366,13 +377,13 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 
 		return queryBL.createQueryBuilder(I_M_HU_Item.class)
 				.addInArrayFilter(I_M_HU_Item.COLUMN_M_HU_ID, huIds)
-				.addOnlyActiveRecordsFilter()
+				//.addOnlyActiveRecordsFilter() // all, including not active
 				.create()
 				.list();
 	}
 
 	@Override
-	public List<I_M_HU> retrieveIncludedHUsNoCache(final Set<HuItemId> huItemIds)
+	public List<I_M_HU> retrieveAllIncludedHUsNoCache(final Set<HuItemId> huItemIds)
 	{
 		if (huItemIds.isEmpty())
 		{
@@ -381,13 +392,13 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 
 		return queryBL.createQueryBuilder(I_M_HU.class)
 				.addInArrayFilter(I_M_HU.COLUMNNAME_M_HU_Item_Parent_ID, huItemIds)
-				.addOnlyActiveRecordsFilter()
+				//.addOnlyActiveRecordsFilter() // all, including not active
 				.create()
 				.list();
 	}
 
 	@Override
-	public List<I_M_HU_Item_Storage> retrieveItemStoragesNoCache(final Set<HuItemId> huItemIds)
+	public List<I_M_HU_Item_Storage> retrieveAllItemStoragesNoCache(final Set<HuItemId> huItemIds)
 	{
 		if (huItemIds.isEmpty())
 		{
@@ -396,13 +407,13 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 
 		return queryBL.createQueryBuilder(I_M_HU_Item_Storage.class)
 				.addInArrayFilter(I_M_HU_Item_Storage.COLUMNNAME_M_HU_Item_ID, huItemIds)
-				.addOnlyActiveRecordsFilter()
+				//.addOnlyActiveRecordsFilter() // all, including not active
 				.create()
 				.list();
 	}
 
 	@Override
-	public List<I_M_HU_Storage> retrieveStoragesNoCache(final Set<HuId> huIds)
+	public List<I_M_HU_Storage> retrieveAllStoragesNoCache(final Set<HuId> huIds)
 	{
 		if (huIds.isEmpty())
 		{
@@ -411,7 +422,7 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 
 		return queryBL.createQueryBuilder(I_M_HU_Storage.class)
 				.addInArrayFilter(I_M_HU_Storage.COLUMNNAME_M_HU_ID, huIds)
-				.addOnlyActiveRecordsFilter()
+				//.addOnlyActiveRecordsFilter() // all, including not active
 				.create()
 				.list();
 	}
@@ -932,6 +943,19 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 		}
 	}
 
+	@NonNull
+	public Optional<HuPackingInstructionsItemId> retrieveDefaultParentPIItemId(
+			@NonNull final I_M_HU_PI huPI,
+			@Nullable final String huUnitType,
+			@Nullable final BPartnerId bpartnerId)
+	{
+		final I_M_HU_PI_Item parentPIItem = retrieveDefaultParentPIItem(huPI, huUnitType, bpartnerId);
+
+		return Optional.ofNullable(parentPIItem)
+				.map(I_M_HU_PI_Item::getM_HU_PI_Item_ID)
+				.map(HuPackingInstructionsItemId::ofRepoId);
+	}
+
 	private boolean isDefaultLU(final I_M_HU_PI_Item parentPIItem)
 	{
 		return parentPIItem.getM_HU_PI_Version().getM_HU_PI().isDefaultLU();
@@ -1019,5 +1043,25 @@ public class HandlingUnitsDAO implements IHandlingUnitsDAO
 			hu.setIsReserved(reserved);
 			saveHU(hu);
 		}
+	}
+
+	@Override
+	public Optional<HuId> getFirstHuIdByExternalLotNo(final String externalLotNo)
+	{
+		return createHUQueryBuilder()
+				.setHUStatus(X_M_HU.HUSTATUS_Active)
+				.setOnlyTopLevelHUs()
+				.addOnlyWithAttribute(AttributeConstants.HU_ExternalLotNumber, externalLotNo)
+				.createQuery()
+				.firstIdOnlyOptional(HuId::ofRepoId);
+	}
+
+	@Override
+	public <T> Stream<T> streamByQuery(@NonNull final IQueryBuilder<I_M_HU> queryBuilder, @NonNull final Function<I_M_HU, T> mapper)
+	{
+		return queryBuilder
+				.create()
+				.iterateAndStream()
+				.map(mapper);
 	}
 }

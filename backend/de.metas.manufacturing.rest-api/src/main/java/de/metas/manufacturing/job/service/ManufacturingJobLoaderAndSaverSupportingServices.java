@@ -18,6 +18,7 @@ import de.metas.material.planning.pporder.IPPOrderBOMBL;
 import de.metas.material.planning.pporder.OrderBOMLineQuantities;
 import de.metas.material.planning.pporder.PPOrderQuantities;
 import de.metas.organization.IOrgDAO;
+import de.metas.organization.InstantAndOrgId;
 import de.metas.organization.OrgId;
 import de.metas.product.IProductBL;
 import de.metas.product.IssuingToleranceSpec;
@@ -42,6 +43,7 @@ import org.eevolution.model.I_PP_Order;
 import org.eevolution.model.I_PP_Order_BOMLine;
 
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Optional;
 
 @Builder
@@ -72,6 +74,11 @@ public class ManufacturingJobLoaderAndSaverSupportingServices
 
 	public ImmutableList<I_PP_Order_BOMLine> getOrderBOMLines(@NonNull final PPOrderId ppOrderId) {return ImmutableList.copyOf(ppOrderBOMBL.retrieveOrderBOMLines(ppOrderId, I_PP_Order_BOMLine.class));}
 
+	public ZonedDateTime getDatePromised(final I_PP_Order ppOrder)
+	{
+		return InstantAndOrgId.ofTimestamp(ppOrder.getDatePromised(), ppOrder.getAD_Org_ID()).toZonedDateTime(orgDAO::getTimeZone);
+	}
+
 	public PPOrderQuantities getQuantities(@NonNull final I_PP_Order order) {return ppOrderBOMBL.getQuantities(order);}
 
 	public OrderBOMLineQuantities getQuantities(@NonNull final I_PP_Order_BOMLine orderBOMLine) {return ppOrderBOMBL.getQuantities(orderBOMLine);}
@@ -86,9 +93,9 @@ public class ManufacturingJobLoaderAndSaverSupportingServices
 		return attributeDAO.getImmutableAttributeSetById(asiId);
 	}
 
-	public HUQRCode getQRCodeByHuId(@NonNull final HuId huId)
+	public HUQRCode getFirstQRCodeByHuId(@NonNull final HuId huId)
 	{
-		return huQRCodeService.getQRCodeByHuId(huId);
+		return huQRCodeService.getFirstQRCodeByHuId(huId);
 	}
 
 	public Optional<HuId> getHuIdByQRCodeIfExists(@NonNull final HUQRCode qrCode)
@@ -96,9 +103,10 @@ public class ManufacturingJobLoaderAndSaverSupportingServices
 		return huQRCodeService.getHuIdByQRCodeIfExists(qrCode);
 	}
 
-	public void assignQRCode(@NonNull HUQRCode qrCode, @NonNull HuId huId)
+	public void assignQRCodeForReceiptHU(@NonNull final HUQRCode qrCode, @NonNull final HuId huId)
 	{
-		huQRCodeService.assign(qrCode, huId);
+		final boolean ensureSingleAssignment = true;
+		huQRCodeService.assign(qrCode, huId, ensureSingleAssignment);
 	}
 
 	public Quantity getHUCapacity(

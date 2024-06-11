@@ -22,6 +22,7 @@
 
 package de.metas.contracts.modular.interim.invoice.service.impl;
 
+import de.metas.calendar.standard.YearAndCalendarId;
 import de.metas.contracts.ConditionsId;
 import de.metas.contracts.FlatrateTermId;
 import de.metas.contracts.flatrate.TypeConditions;
@@ -38,9 +39,7 @@ import org.compiere.SpringContextHolder;
 import org.compiere.util.TimeUtil;
 import org.slf4j.Logger;
 
-import javax.annotation.Nullable;
 import java.sql.Timestamp;
-import java.util.function.Consumer;
 
 public class InterimFlatrateTermService implements IInterimFlatrateTermService
 {
@@ -54,25 +53,6 @@ public class InterimFlatrateTermService implements IInterimFlatrateTermService
 			@NonNull final I_C_Flatrate_Term modularFlatrateTermRecord,
 			@NonNull final Timestamp startDate,
 			@NonNull final Timestamp endDate)
-	{
-		createInterimContract(modularFlatrateTermRecord, startDate, endDate, null);
-	}
-
-	@Override
-	public void create(
-			@NonNull final I_C_Flatrate_Term modularFlatrateTermRecord,
-			@NonNull final Timestamp startDate,
-			@NonNull final Timestamp endDate,
-			@NonNull final Consumer<I_C_Flatrate_Term> beforeCompleteInterceptor)
-	{
-		createInterimContract(modularFlatrateTermRecord, startDate, endDate, beforeCompleteInterceptor);
-	}
-
-	private void createInterimContract(
-			@NonNull final I_C_Flatrate_Term modularFlatrateTermRecord,
-			@NonNull final Timestamp startDate,
-			@NonNull final Timestamp endDate,
-			@Nullable final Consumer<I_C_Flatrate_Term> beforeCompleteInterceptor)
 	{
 		final FlatrateTermId flatrateTermId = FlatrateTermId.ofRepoId(modularFlatrateTermRecord.getC_Flatrate_Term_ID());
 
@@ -92,7 +72,7 @@ public class InterimFlatrateTermService implements IInterimFlatrateTermService
 				.orderLineId(orderLineId)
 				.dateFrom(TimeUtil.asInstantNonNull(startDate))
 				.dateTo(TimeUtil.asInstantNonNull(endDate))
-				.beforeCompleteInterceptor(beforeCompleteInterceptor)
+				.yearAndCalendarId(YearAndCalendarId.ofRepoId(modularFlatrateTermRecord.getHarvesting_Year_ID(), modularFlatrateTermRecord.getC_Harvesting_Calendar_ID()))
 				.build()
 				.execute();
 	}

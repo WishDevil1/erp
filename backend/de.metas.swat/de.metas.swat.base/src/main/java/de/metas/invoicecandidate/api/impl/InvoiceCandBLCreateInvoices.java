@@ -67,7 +67,9 @@ import de.metas.util.Loggables;
 import de.metas.util.Services;
 import de.metas.util.collections.IdentityHashSet;
 import de.metas.workflow.api.IWFExecutionFactory;
+import lombok.Getter;
 import lombok.NonNull;
+import lombok.Setter;
 import org.adempiere.ad.trx.api.ITrx;
 import org.adempiere.ad.trx.api.ITrxListenerManager.TrxEventTiming;
 import org.adempiere.ad.trx.api.ITrxManager;
@@ -105,7 +107,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import static org.adempiere.model.InterfaceWrapperHelper.copyValues;
 import static org.adempiere.model.InterfaceWrapperHelper.create;
@@ -166,6 +167,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 	// Parameters
 	private Properties _ctx;
 	private String _trxName;
+	@Setter
 	private Class<? extends IInvoiceGeneratorRunnable> invoiceGeneratorClass = null;
 	private static final boolean createInvoiceFromOrder = false; // FIXME: 08511 workaround
 	private Boolean _ignoreInvoiceSchedule = null;
@@ -396,9 +398,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 				invoice.setDateAcct(TimeUtil.asTimestamp(invoiceHeader.getDateAcct(), timeZone)); // 03905: also updating DateAcct
 
 				invoice.setM_PriceList_ID(invoiceHeader.getM_PriceList_ID()); // #367: get M_PriceList_ID directly from invoiceHeader.
-				Set<String> externalIds = invoiceHeader.getAllInvoiceCandidates().stream().map(I_C_Invoice_Candidate::getExternalHeaderId).filter(Objects::nonNull).collect(Collectors.toSet());
-				Check.assume(externalIds.size() <= 1, "Unexpectedly found multiple externalId candidates for the same invoice: {}", externalIds);
-				invoice.setExternalId(externalIds.stream().findFirst().orElse(null));
+				invoice.setExternalId(invoiceHeader.getExternalId());
 			}
 
 			invoice.setDueDate(TimeUtil.asTimestamp(invoiceHeader.getOverrideDueDate(), timeZone));
@@ -544,7 +544,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 		if (invoice.getC_DocTypeTarget_ID() <= 0)
 		{
 
-			final I_C_DocType invoiceHeaderDocType = invoiceHeader.getDocTypeInvoiceId().map(docTypeDAO::getById).orElse(null);
+			final I_C_DocType invoiceHeaderDocType = invoiceHeader.getDocTypeInvoiceId().map(docTypeDAO::getRecordById).orElse(null);
 			if (invoiceHeaderDocType != null)
 			{
 				invoiceBL.setDocTypeTargetIdAndUpdateDescription(invoice, invoiceHeaderDocType.getC_DocType_ID());
@@ -565,7 +565,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 		// and that document type is not a credit memo.
 		{
 			final boolean invoiceHeader_IsCreditMemo = invoiceHeaderDocBaseType != null && invoiceHeaderDocBaseType.isCreditMemo();
-			final I_C_DocType invoiceDocType = docTypeDAO.getById(invoice.getC_DocTypeTarget_ID());
+			final I_C_DocType invoiceDocType = docTypeDAO.getRecordById(invoice.getC_DocTypeTarget_ID());
 			Check.assumeNotNull(invoiceDocType, "invoiceDocType not null"); // shall not happen
 			final InvoiceDocBaseType invoiceDocBaseType = InvoiceDocBaseType.ofCode(invoiceDocType.getDocBaseType());
 			final boolean invoice_IsCreditMemo = invoiceDocBaseType.isCreditMemo();
@@ -579,6 +579,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 	// NOTE: not static because we share the services
 	private class DefaultInvoiceLineGeneratorRunnable implements TrxRunnable2
 	{
+		@Getter
 		private final List<I_C_InvoiceLine> createdLines;
 		private final I_C_Invoice invoice;
 		private final List<I_C_Invoice_Candidate> errorCandidates;
@@ -708,6 +709,10 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 				invoiceLine.setC_Shipping_Location_ID(cand.getC_Shipping_Location_ID());
 
 				invoiceLine.setC_Flatrate_Term_ID(cand.getC_Flatrate_Term_ID());
+				invoiceLine.setProductName(cand.getProductName());
+				invoiceLine.setInvoicingGroup(cand.getInvoicingGroup());
+				invoiceLine.setUserElementNumber1(cand.getUserElementNumber1());
+				invoiceLine.setUserElementNumber2(cand.getUserElementNumber2());
 				//
 				// Product / Charge
 				if (ilVO.getM_Product_ID() > 0)
@@ -838,11 +843,13 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 		{
 			final I_C_Invoice_Candidate icRecord = invoiceCandDAO.getByIdOutOfTrx(invoiceCandidateId);
 			icRecord.setQtyToInvoice_Override(null);
+			icRecord.setQtyToInvoiceInUOM_Override(null);
 			icRecord.setPriceEntered_Override(null);
 			invoiceCandDAO.save(icRecord);
 		}
 
-		private I_M_AttributeSetInstance createASI(final Set<IInvoiceLineAttribute> invoiceLineAttributes)
+		@Nullable
+		private I_M_AttributeSetInstance createASI(@Nullable final List<IInvoiceLineAttribute> invoiceLineAttributes)
 		{
 			// If there are no attributes, return a null ASI
 			if (Check.isEmpty(invoiceLineAttributes))
@@ -897,11 +904,6 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 				errorCandidates.clear();
 				errorException[0] = null;
 			}
-		}
-
-		public List<I_C_InvoiceLine> getCreatedLines()
-		{
-			return createdLines;
 		}
 	}
 
@@ -1083,7 +1085,7 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 					userInChargeId = USERINCHARGE_NA;
 				}
 
-				List<I_C_Invoice_Candidate> candsOfUserId = userId2cands.computeIfAbsent(userInChargeId, k -> new ArrayList<>());
+				final List<I_C_Invoice_Candidate> candsOfUserId = userId2cands.computeIfAbsent(userInChargeId, k -> new ArrayList<>());
 				candsOfUserId.add(ic);
 			}
 
@@ -1182,14 +1184,6 @@ public class InvoiceCandBLCreateInvoices implements IInvoiceGenerator
 			}
 		}
 		return candidates;
-	}
-
-	/**
-	 * Set the invoice generator to use in invoicing.
-	 */
-	public void setInvoiceGeneratorClass(final Class<? extends IInvoiceGeneratorRunnable> invoiceGeneratorClass)
-	{
-		this.invoiceGeneratorClass = invoiceGeneratorClass;
 	}
 
 	@Override

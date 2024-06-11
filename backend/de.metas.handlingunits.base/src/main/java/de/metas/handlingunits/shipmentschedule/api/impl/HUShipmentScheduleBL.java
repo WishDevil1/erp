@@ -12,7 +12,7 @@ import de.metas.document.IDocTypeDAO;
 import de.metas.handlingunits.HUPIItemProductId;
 import de.metas.handlingunits.HuId;
 import de.metas.handlingunits.HuPackingInstructionsVersionId;
-import de.metas.handlingunits.IHUContext;
+import de.metas.handlingunits.IHUCapacityBL;
 import de.metas.handlingunits.IHUContextFactory;
 import de.metas.handlingunits.IHUPIItemProductDAO;
 import de.metas.handlingunits.IHUShipperTransportationBL;
@@ -22,6 +22,7 @@ import de.metas.handlingunits.IHandlingUnitsDAO;
 import de.metas.handlingunits.IMutableHUContext;
 import de.metas.handlingunits.LUTUCUPair;
 import de.metas.handlingunits.allocation.ILUTUConfigurationFactory;
+import de.metas.handlingunits.allocation.impl.TULoader;
 import de.metas.handlingunits.exceptions.HUException;
 import de.metas.handlingunits.model.I_C_OrderLine;
 import de.metas.handlingunits.model.I_M_HU;
@@ -37,6 +38,8 @@ import de.metas.handlingunits.shipmentschedule.api.IHUShipmentScheduleBL;
 import de.metas.handlingunits.shipmentschedule.api.IHUShipmentScheduleDAO;
 import de.metas.handlingunits.shipmentschedule.api.IInOutProducerFromShipmentScheduleWithHU;
 import de.metas.handlingunits.shipmentschedule.api.ShipmentScheduleWithHU;
+import de.metas.handlingunits.shipmentschedule.api.ShipmentScheduleWithHUFactory;
+import de.metas.handlingunits.shipmentschedule.api.ShipmentScheduleWithHUSupportingServices;
 import de.metas.handlingunits.shipmentschedule.spi.impl.InOutProducerFromShipmentScheduleWithHU;
 import de.metas.i18n.AdMessageKey;
 import de.metas.inout.ShipmentScheduleId;
@@ -69,6 +72,7 @@ import org.adempiere.service.ISysConfigBL;
 import org.adempiere.util.agg.key.IAggregationKeyBuilder;
 import org.adempiere.util.lang.IContextAware;
 import org.adempiere.warehouse.LocatorId;
+import org.compiere.model.I_C_UOM;
 import org.compiere.model.X_M_InOut;
 import org.slf4j.Logger;
 
@@ -77,7 +81,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 import static de.metas.common.util.CoalesceUtil.firstGreaterThanZero;
 import static java.math.BigDecimal.ONE;
@@ -131,6 +138,7 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 	private final IHUPIItemProductDAO huPIItemProductDAO = Services.get(IHUPIItemProductDAO.class);
 	private final ISysConfigBL sysConfigBL = Services.get(ISysConfigBL.class);
 	private final IHUPackingAwareBL huPackingAwareBL = Services.get(IHUPackingAwareBL.class);
+	private final IHUCapacityBL huCapacityBL = Services.get(IHUCapacityBL.class);
 
 	private static final String SYSCONFIG_ShipmentConsolidationPeriod = "de.metas.handlingunits.shipmentschedule.api.impl.HUShipmentScheduleBL.ShipmentConsolidationPeriod";
 	private static final String DEFAULT_ShipmentConsolidationPeriod = null;
@@ -141,6 +149,12 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 	public I_M_ShipmentSchedule getById(@NonNull final ShipmentScheduleId id)
 	{
 		return shipmentScheduleDAO.getById(id, I_M_ShipmentSchedule.class);
+	}
+
+	@Override
+	public Map<ShipmentScheduleId, I_M_ShipmentSchedule> getByIds(@NonNull final Set<ShipmentScheduleId> ids)
+	{
+		return shipmentScheduleDAO.getByIds(ids, I_M_ShipmentSchedule.class);
 	}
 
 	@Override
@@ -160,7 +174,7 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 			@NonNull final de.metas.inoutcandidate.model.I_M_ShipmentSchedule sched,
 			@NonNull final StockQtyAndUOMQty stockQtyAndCatchQty,
 			@NonNull final I_M_HU tuOrVHU,
-			@NonNull final IHUContext huContext,
+			@NonNull final ShipmentScheduleWithHUFactory factory,
 			final boolean anonymousHuPickedOnTheFly)
 	{
 		// Retrieve VHU, TU and LU
@@ -177,8 +191,8 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 		final I_M_ShipmentSchedule_QtyPicked schedQtyPickedHU = create(schedQtyPicked, I_M_ShipmentSchedule_QtyPicked.class);
 		setHUs(schedQtyPickedHU, husPair);
 
-		ShipmentScheduleWithHU
-				.ofShipmentScheduleQtyPicked(schedQtyPickedHU, huContext)
+		factory
+				.ofQtyPickedRecord(schedQtyPickedHU)
 				.updateQtyTUAndQtyLU();
 		saveRecord(schedQtyPickedHU);
 
@@ -188,12 +202,12 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 		setHUStatusToPicked(topLevelHU);
 		setHUPartnerAndLocationFromSched(topLevelHU, sched);
 		handlingUnitsDAO.saveHU(topLevelHU);
-		huContext.flush();
+		factory.getHuContext().flush();
 
-		return ShipmentScheduleWithHU.ofShipmentScheduleQtyPicked(schedQtyPickedHU, huContext);
+		return factory.ofQtyPickedRecord(schedQtyPickedHU);
 	}
 
-	private void setHUs(final I_M_ShipmentSchedule_QtyPicked qtyPickedRecord, final LUTUCUPair husPair)
+	private static void setHUs(final I_M_ShipmentSchedule_QtyPicked qtyPickedRecord, final LUTUCUPair husPair)
 	{
 		qtyPickedRecord.setM_LU_HU(husPair.getM_LU_HU());
 		qtyPickedRecord.setM_TU_HU(husPair.getM_TU_HU());
@@ -237,7 +251,10 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 
 		final I_M_HU luHU = handlingUnitsBL.getLoadingUnitHU(tuHU);
 
-		final IHUContext huContext = huContextFactory.createMutableHUContext(getContextAware(tuHU));
+		final ShipmentScheduleWithHUFactory shipmentScheduleWithHUFactory = ShipmentScheduleWithHUFactory.builder()
+				.supportingServices(ShipmentScheduleWithHUSupportingServices.getInstance())
+				.huContext(huContextFactory.createMutableHUContext(getContextAware(tuHU)))
+				.build();
 
 		//
 		// Iterate all QtyPicked records and update M_LU_HU_ID
@@ -252,13 +269,47 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 
 			// Update LU
 			ssQtyPicked.setM_LU_HU(luHU);
-			ShipmentScheduleWithHU
-					.ofShipmentScheduleQtyPicked(ssQtyPicked, huContext)
+			shipmentScheduleWithHUFactory
+					.ofQtyPickedRecord(ssQtyPicked)
 					.updateQtyTUAndQtyLU();
 
 			save(ssQtyPicked);
 		}
 	}
+
+	@Override
+	public void updateAllocationLUAndTUForCU(final I_M_HU cuHU)
+	{
+		Check.assume(handlingUnitsBL.isPureVirtual(cuHU), "{} shall be a CU", cuHU);
+
+		final I_M_HU tuHU = handlingUnitsBL.getTransportUnitHU(cuHU);
+		final I_M_HU luHU = tuHU != null ? handlingUnitsBL.getLoadingUnitHU(tuHU) : null;
+
+		final ShipmentScheduleWithHUFactory shipmentScheduleWithHUFactory = ShipmentScheduleWithHUFactory.builder()
+				.supportingServices(ShipmentScheduleWithHUSupportingServices.getInstance())
+				.huContext(huContextFactory.createMutableHUContext(getContextAware(cuHU)))
+				.build();
+
+		//
+		// Iterate all QtyPicked records and update M_LU_HU_ID
+		final List<I_M_ShipmentSchedule_QtyPicked> ssQtyPickedList = huShipmentScheduleDAO.retrieveSchedsQtyPickedForHU(cuHU);
+		for (final I_M_ShipmentSchedule_QtyPicked ssQtyPicked : ssQtyPickedList)
+		{
+			// Don't touch those which were already delivered
+			if (shipmentScheduleAllocBL.isDelivered(ssQtyPicked))
+			{
+				continue;
+			}
+
+			// Update LU
+			ssQtyPicked.setM_TU_HU(tuHU);
+			ssQtyPicked.setM_LU_HU(luHU);
+			shipmentScheduleWithHUFactory.ofQtyPickedRecord(ssQtyPicked).updateQtyTUAndQtyLU();
+
+			save(ssQtyPicked);
+		}
+	}
+
 
 	@Override
 	public void unallocateTU(final de.metas.inoutcandidate.model.I_M_ShipmentSchedule sched,
@@ -477,7 +528,7 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 			return null;
 		}
 
-		return huPIItemProductDAO.getById(packingMaterialId);
+		return huPIItemProductDAO.getRecordById(packingMaterialId);
 	}
 
 	@Override
@@ -538,6 +589,28 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 		}
 
 		return shipmentSchedule;
+	}
+
+	@Override
+	public Optional<TULoader> createTULoader(final I_M_ShipmentSchedule schedule)
+	{
+		final HUPIItemProductId tuPIItemProductId = getEffectivePackingMaterialId(schedule);
+		if (tuPIItemProductId == null || tuPIItemProductId.isVirtualHU())
+		{
+			return Optional.empty();
+		}
+
+		final I_M_HU_PI_Item_Product tuPIItemProduct = huPIItemProductDAO.getRecordById(tuPIItemProductId);
+		final ProductId cuProductId = ProductId.ofRepoId(schedule.getM_Product_ID());
+		final I_C_UOM cuUOM = shipmentScheduleBL.getUomOfProduct(schedule);
+
+		final TULoader tuLoader = TULoader.builder()
+				.huContext(handlingUnitsBL.createMutableHUContext())
+				.tuPI(tuPIItemProduct.getM_HU_PI_Item().getM_HU_PI_Version().getM_HU_PI())
+				.capacity(huCapacityBL.getCapacity(tuPIItemProduct, cuProductId, cuUOM))
+				.build();
+
+		return Optional.of(tuLoader);
 	}
 
 	@Override
@@ -621,7 +694,7 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 		}
 
 		shipmentScheduleToUse.setQtyOrdered_TU(qtyTU_Effective);
-		shipmentScheduleToUse.setM_HU_PI_Item_Product(piItemProduct_Effective);
+		shipmentScheduleToUse.setM_HU_PI_Item_Product_ID(piItemProduct_Effective != null ? piItemProduct_Effective.getM_HU_PI_Item_Product_ID() : -1);
 
 		// set pack description
 		final String description;
@@ -665,10 +738,10 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 			@NonNull final I_M_ShipmentSchedule shipmentSchedule,
 			@NonNull final I_C_OrderLine orderLine)
 	{
-		final I_M_HU_PI_Item_Product piItemProduct_Effective = orderLine.getM_HU_PI_Item_Product();
+		final int piItemProduct_Effective_ID = orderLine.getM_HU_PI_Item_Product_ID();
 
-		shipmentSchedule.setM_HU_PI_Item_Product_Calculated(piItemProduct_Effective);
-		shipmentSchedule.setM_HU_PI_Item_Product(piItemProduct_Effective);
+		shipmentSchedule.setM_HU_PI_Item_Product_Calculated_ID(piItemProduct_Effective_ID);
+		shipmentSchedule.setM_HU_PI_Item_Product_ID(piItemProduct_Effective_ID);
 
 		if (shipmentSchedule.getM_HU_PI_Item_Product_Override_ID() <= 0)
 		{
@@ -693,11 +766,11 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 		// task:10876 : calculate Qty Ordered LU  based on the Packing Material Max. Load Weight
 		final I_M_HU_PI_Item m_lu_hu_pi_item = lutuConfiguration.getM_LU_HU_PI_Item();
 		final HuPackingInstructionsVersionId versionId = Objects.nonNull(m_lu_hu_pi_item) ?
-				                                         HuPackingInstructionsVersionId.ofRepoId(m_lu_hu_pi_item.getM_HU_PI_Version_ID())  :
-				                                         null;
+				HuPackingInstructionsVersionId.ofRepoId(m_lu_hu_pi_item.getM_HU_PI_Version_ID()) :
+				null;
 		final I_M_HU_PackingMaterial packingMaterial = Objects.nonNull(versionId) ?
-				                                       handlingUnitsDAO.retrievePackingMaterialByPIVersionID(versionId, BPartnerId.ofRepoId(shipmentSchedule.getC_BPartner_ID())):
-				                                       null;
+				handlingUnitsDAO.retrievePackingMaterialByPIVersionID(versionId, BPartnerId.ofRepoId(shipmentSchedule.getC_BPartner_ID())) :
+				null;
 
 		if (Objects.nonNull(packingMaterial)
 				&& packingMaterial.isQtyLUByMaxLoadWeight())
@@ -743,6 +816,12 @@ public class HUShipmentScheduleBL implements IHUShipmentScheduleBL
 	public void closeShipmentSchedule(final de.metas.inoutcandidate.model.I_M_ShipmentSchedule shipmentSchedule)
 	{
 		shipmentScheduleBL.closeShipmentSchedule(shipmentSchedule);
+	}
+
+	@Override
+	public void closeShipmentSchedules(final Set<ShipmentScheduleId> shipmentScheduleIds)
+	{
+		shipmentScheduleBL.closeShipmentSchedules(shipmentScheduleIds);
 	}
 
 	@Override

@@ -1,18 +1,19 @@
 package de.metas.ui.web.material.cockpit.rowfactory;
 
-import de.metas.material.cockpit.QtyDemandQtySupply;
+import de.metas.material.cockpit.ProductWithDemandSupply;
 import de.metas.material.cockpit.model.I_MD_Cockpit;
 import de.metas.material.cockpit.model.I_MD_Stock;
 import de.metas.product.IProductBL;
-import de.metas.product.ResourceId;
 import de.metas.quantity.Quantity;
+import de.metas.ui.web.material.cockpit.MaterialCockpitDetailsRowAggregationIdentifier;
 import de.metas.ui.web.material.cockpit.MaterialCockpitRow;
+import de.metas.ui.web.material.cockpit.MaterialCockpitRowLookups;
 import de.metas.uom.IUOMDAO;
 import de.metas.util.Services;
 import lombok.AccessLevel;
-import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.ToString;
 import org.compiere.model.I_C_UOM;
 import org.compiere.util.TimeUtil;
@@ -53,21 +54,18 @@ import static de.metas.util.Check.assumeNotNull;
  * @author metas-dev <dev@metasfresh.com>
  *
  */
-@EqualsAndHashCode(of = "plantId")
+
 @ToString
+@RequiredArgsConstructor
 public class CountingSubRowBucket
 {
 	@Getter(AccessLevel.NONE)
-	private final transient IProductBL productBL = Services.get(IProductBL.class);
+	private final IProductBL productBL = Services.get(IProductBL.class);
 	@Getter(AccessLevel.NONE)
-	private final transient IUOMDAO uomDAO = Services.get(IUOMDAO.class);
+	private final IUOMDAO uomDAO = Services.get(IUOMDAO.class);
 
-	public static CountingSubRowBucket create(final int plantId)
-	{
-		return new CountingSubRowBucket(plantId);
-	}
-
-	private final ResourceId plantId;
+	@NonNull private final MaterialCockpitRowLookups rowLookups;
+	@NonNull private final MaterialCockpitDetailsRowAggregationIdentifier detailsRowAggregationIdentifier;
 
 	// Zaehlbestand
 	private Quantity qtyStockEstimateCountAtDate;
@@ -83,19 +81,14 @@ public class CountingSubRowBucket
 	private Quantity qtyStockCurrentAtDate;
 
 	private Quantity qtyOnHandStock;
-	
+
 	private Quantity qtySupplyPurchaseOrder;
-	
+
 	private Quantity qtyDemandSalesOrder;
 
 	private final Set<Integer> cockpitRecordIds = new HashSet<>();
 
 	private final Set<Integer> stockRecordIds = new HashSet<>();
-
-	public CountingSubRowBucket(final int plantIdInt)
-	{
-		this.plantId = ResourceId.ofRepoIdOrNull(plantIdInt);
-	}
 
 	public void addCockpitRecord(@NonNull final I_MD_Cockpit cockpitRecord)
 	{
@@ -121,7 +114,7 @@ public class CountingSubRowBucket
 		stockRecordIds.add(stockRecord.getMD_Stock_ID());
 	}
 
-	public void addQuantitiesRecord(@NonNull final QtyDemandQtySupply quantitiesRecord)
+	public void addQuantitiesRecord(@NonNull final ProductWithDemandSupply quantitiesRecord)
 	{
 		final I_C_UOM uom = uomDAO.getById(quantitiesRecord.getUomId());
 
@@ -137,9 +130,10 @@ public class CountingSubRowBucket
 				"productIdAndDate may not be null; mainRowBucket={}", mainRowBucket);
 
 		return MaterialCockpitRow.countingSubRowBuilder()
+				.lookups(rowLookups)
 				.date(productIdAndDate.getDate())
 				.productId(productIdAndDate.getProductId().getRepoId())
-				.plantId(plantId)
+				.detailsRowAggregationIdentifier(detailsRowAggregationIdentifier)
 				.qtyDemandSalesOrder(qtyDemandSalesOrder)
 				.qtySupplyPurchaseOrder(qtySupplyPurchaseOrder)
 				.qtyStockEstimateCountAtDate(qtyStockEstimateCountAtDate)

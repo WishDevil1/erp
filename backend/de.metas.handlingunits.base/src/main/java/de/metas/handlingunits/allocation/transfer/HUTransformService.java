@@ -24,6 +24,7 @@ package de.metas.handlingunits.allocation.transfer;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import de.metas.bpartner.BPartnerId;
 import de.metas.common.util.CoalesceUtil;
 import de.metas.common.util.time.SystemTime;
@@ -40,11 +41,14 @@ import de.metas.handlingunits.IMutableHUContext;
 import de.metas.handlingunits.QtyTU;
 import de.metas.handlingunits.allocation.IAllocationDestination;
 import de.metas.handlingunits.allocation.IAllocationRequest;
+import de.metas.handlingunits.allocation.IAllocationSource;
 import de.metas.handlingunits.allocation.IHUContextProcessor;
 import de.metas.handlingunits.allocation.impl.AllocationUtils;
 import de.metas.handlingunits.allocation.impl.HUListAllocationSourceDestination;
+import de.metas.handlingunits.allocation.impl.HULoader;
 import de.metas.handlingunits.allocation.impl.HUProducerDestination;
 import de.metas.handlingunits.allocation.spi.impl.AggregateHUTrxListener;
+import de.metas.handlingunits.allocation.strategy.AllocationStrategyType;
 import de.metas.handlingunits.allocation.transfer.impl.HUSplitBuilderCoreEngine;
 import de.metas.handlingunits.allocation.transfer.impl.LUTUProducerDestination;
 import de.metas.handlingunits.attribute.IHUAttributesBL;
@@ -67,6 +71,7 @@ import de.metas.handlingunits.model.X_M_HU_Item;
 import de.metas.handlingunits.model.X_M_HU_PI_Item;
 import de.metas.handlingunits.qrcodes.model.HUQRCode;
 import de.metas.handlingunits.qrcodes.service.HUQRCodesService;
+import de.metas.handlingunits.qrcodes.service.QRCodeConfigurationService;
 import de.metas.handlingunits.storage.EmptyHUListener;
 import de.metas.handlingunits.storage.IHUProductStorage;
 import de.metas.handlingunits.storage.IHUStorage;
@@ -100,6 +105,7 @@ import javax.annotation.Nullable;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -138,7 +144,9 @@ public class HUTransformService
 	private final IHUCapacityBL huCapacityBL = Services.get(IHUCapacityBL.class);
 	private final ITrxManager trxManager = Services.get(ITrxManager.class);
 	private final IHUAttributesBL huAttributesBL = Services.get(IHUAttributesBL.class);
+	private final IHUContextFactory huContextFactory = Services.get(IHUContextFactory.class);
 	private final SpringContextHolder.Lazy<HUQRCodesService> huQRCodesService;
+	private final SpringContextHolder.Lazy<QRCodeConfigurationService> qrCodeConfigurationService;
 
 	private final IHUContext huContext;
 	private final ImmutableList<TableRecordReference> referencedObjects;
@@ -161,6 +169,7 @@ public class HUTransformService
 			@Nullable final List<TableRecordReference> referencedObjects)
 	{
 		this.huQRCodesService = SpringContextHolder.lazyBean(HUQRCodesService.class, huQRCodesService);
+		this.qrCodeConfigurationService = SpringContextHolder.lazyBean(QRCodeConfigurationService.class, null);
 
 		this.referencedObjects = referencedObjects != null ? ImmutableList.copyOf(referencedObjects) : ImmutableList.of();
 
@@ -190,6 +199,7 @@ public class HUTransformService
 							   @Nullable final List<TableRecordReference> referencedObjects)
 	{
 		this.huQRCodesService = SpringContextHolder.lazyBean(HUQRCodesService.class);
+		this.qrCodeConfigurationService = SpringContextHolder.lazyBean(QRCodeConfigurationService.class, null);
 
 		this.referencedObjects = referencedObjects != null ? ImmutableList.copyOf(referencedObjects) : ImmutableList.of();
 		this.huContext = huContext;
@@ -684,9 +694,9 @@ public class HUTransformService
 	@lombok.Value
 	public static class HUsToNewTUsRequest
 	{
-		List<I_M_HU> sourceHUs;
-
-		int qtyTU;
+		@NonNull List<I_M_HU> sourceHUs;
+		@NonNull QtyTU qtyTU;
+		@Nullable ProductId expectedProductId;
 
 		public static HUsToNewTUsRequest forSourceHuAndQty(@NonNull final I_M_HU sourceHU, final int qtyTU)
 		{
@@ -696,12 +706,24 @@ public class HUTransformService
 		@lombok.Builder
 		private HUsToNewTUsRequest(
 				@Singular("sourceHU") @NonNull final List<I_M_HU> sourceHUs,
-				final int qtyTU)
+				@NonNull final QtyTU qtyTU,
+				@Nullable final ProductId expectedProductId)
 		{
+			Check.assume(qtyTU.isPositive(), "qtyTU shall be positive");
 			this.sourceHUs = sourceHUs;
-
-			Preconditions.checkArgument(qtyTU > 0, "Parameter qtyTU=%s needs to be grreater than zero", qtyTU);
+			this.expectedProductId = expectedProductId;
 			this.qtyTU = qtyTU;
+		}
+
+		public static class HUsToNewTUsRequestBuilder
+		{
+			public HUsToNewTUsRequestBuilder qtyTU(final int qtyTU) {return qtyTU(QtyTU.ofInt(qtyTU));}
+
+			public HUsToNewTUsRequestBuilder qtyTU(final QtyTU qtyTU)
+			{
+				this.qtyTU = qtyTU;
+				return this;
+			}
 		}
 	}
 
@@ -710,12 +732,12 @@ public class HUTransformService
 	 */
 	public List<I_M_HU> husToNewTUs(@NonNull final HUsToNewTUsRequest newTUsRequest)
 	{
-		int qtyTuLeft = newTUsRequest.getQtyTU();
+		int qtyTuLeft = newTUsRequest.getQtyTU().toInt();
 
 		final ImmutableList.Builder<I_M_HU> result = ImmutableList.builder();
 		for (final I_M_HU sourceHU : newTUsRequest.getSourceHUs())
 		{
-			final List<I_M_HU> currentResult = huToNewTUs(sourceHU, qtyTuLeft);
+			final List<I_M_HU> currentResult = huToNewTUs(sourceHU, qtyTuLeft, newTUsRequest.getExpectedProductId());
 			result.addAll(currentResult);
 
 			qtyTuLeft -= currentResult.size();
@@ -727,16 +749,24 @@ public class HUTransformService
 		return result.build();
 	}
 
-	private List<I_M_HU> huToNewTUs(@NonNull final I_M_HU sourceHU, final int qtyTU)
+	private List<I_M_HU> huToNewTUs(
+			@NonNull final I_M_HU sourceHU,
+			final int qtyTU,
+			@Nullable final ProductId expectedProductId)
 	{
 		if (handlingUnitsBL.isLoadingUnit(sourceHU))
 		{
 			final boolean keepLuAsParent = false; // not only extract the new TUs, but also make them "free" standalone TUs.
 			final HashSet<HuId> alreadyExtractedTUIds = new HashSet<>(); // not really needed because keepLuAsParent=false
-			return luExtractTUs(sourceHU, qtyTU, keepLuAsParent, alreadyExtractedTUIds);
+			return luExtractTUs(sourceHU, qtyTU, keepLuAsParent, alreadyExtractedTUIds, expectedProductId);
 		}
 		else if (handlingUnitsBL.isTransportUnitOrAggregate(sourceHU))
 		{
+			if (expectedProductId != null && !huContext.getHUStorageFactory().isSingleProductStorageMatching(sourceHU, expectedProductId))
+			{
+				return ImmutableList.of();
+			}
+			
 			return tuToNewTUs(sourceHU, BigDecimal.valueOf(qtyTU));
 		}
 		else
@@ -758,7 +788,8 @@ public class HUTransformService
 			@NonNull final I_M_HU sourceLU,
 			final int qtyTU,
 			final boolean keepSourceLuAsParent,
-			@NonNull final Set<HuId> alreadyExtractedTUIds)
+			@NonNull final Set<HuId> alreadyExtractedTUIds,
+			@Nullable final ProductId expectedProductId)
 	{
 		// how many TUs we still have to extract
 		int qtyTUsRemaining = Check.assumeGreaterThanZero(qtyTU, "qtyTU");
@@ -774,6 +805,11 @@ public class HUTransformService
 				break;
 			}
 			if (alreadyExtractedTUIds.contains(HuId.ofRepoId(tu.getM_HU_ID())))
+			{
+				continue;
+			}
+
+			if (expectedProductId != null && !huContext.getHUStorageFactory().isSingleProductStorageMatching(tu, expectedProductId))
 			{
 				continue;
 			}
@@ -1192,8 +1228,14 @@ public class HUTransformService
 
 		if (handlingUnitsBL.isAggregateHU(hu))
 		{
-			final HuId extractedTUId = splitOutTUFromAggregated(hu);
-			huQRCodesService.get().assign(huQRCode, extractedTUId);
+            final HuId extractedTUId = splitOutTUFromAggregated(hu);
+
+            final boolean ensureSingleAssignment = !qrCodeConfigurationService.get().isOneQrCodeForAggregatedHUsEnabledFor(hu);
+            if (ensureSingleAssignment)
+            {
+                huQRCodesService.get().removeAssignment(huQRCode, ImmutableSet.of(huId));
+            }
+            huQRCodesService.get().assign(huQRCode, extractedTUId, ensureSingleAssignment);
 
 			return extractedTUId;
 		}
@@ -1252,7 +1294,7 @@ public class HUTransformService
 			final int numberOfTUsToExtract = 1; // we extract only one TU at a time because we don't know how many CUs we will get out of each TU.
 			final boolean keepLuAsParent = true; // we need a "dedicated" TU, but it shall remain with sourceLU.
 
-			final List<I_M_HU> extractedTUs = luExtractTUs(sourceLU, numberOfTUsToExtract, keepLuAsParent, alreadyExtractedTUIds);
+			final List<I_M_HU> extractedTUs = luExtractTUs(sourceLU, numberOfTUsToExtract, keepLuAsParent, alreadyExtractedTUIds, null);
 
 			// There are no real TUs in the LU. Extract the virtual HUs (CUs) directly, if found
 			if (extractedTUs.isEmpty())
@@ -1371,7 +1413,7 @@ public class HUTransformService
 		return totalQtyCU;
 	}
 
-	private void addCUsToTU(
+	public void addCUsToTU(
 			@NonNull final List<I_M_HU> childCUs,
 			@NonNull final I_M_HU targetTU)
 	{
@@ -1403,9 +1445,12 @@ public class HUTransformService
 	}
 
 	@NonNull
-	public HuId extractToTopLevelByQRCode(@NonNull final HuId huId, @NonNull final HUQRCode huQRCode)
+	public HuId extractToTopLevel(@NonNull final HuId huId, @Nullable final HUQRCode huQRCode)
 	{
-		huQRCodesService.get().assertQRCodeAssignedToHU(huQRCode, huId);
+		if (huQRCode != null)
+		{
+			huQRCodesService.get().assertQRCodeAssignedToHU(huQRCode, huId);
+		}
 
 		final I_M_HU hu = handlingUnitsBL.getById(huId);
 		if (handlingUnitsBL.isTopLevel(hu))
@@ -1414,10 +1459,14 @@ public class HUTransformService
 		}
 		else if (handlingUnitsBL.isAggregateHU(hu))
 		{
-			final HuId extractedTUId = splitOutTUFromAggregated(hu);
-			huQRCodesService.get().assign(huQRCode, extractedTUId);
-
-			return extractedTUId;
+            if (huQRCode != null)
+			{
+                return extractIfAggregatedByQRCode(huId, huQRCode);
+			}
+            else
+            {
+                return splitOutTU(hu);
+            }
 		}
 		else
 		{
@@ -1427,12 +1476,102 @@ public class HUTransformService
 	}
 
 	@NonNull
-	private HuId splitOutTUFromAggregated(@NonNull final I_M_HU hu)
+	public Set<HuId> extractFromAggregatedByQrCode(
+			@NonNull final HuId aggregatedHuId,
+			@Nullable final HUQRCode huQRCode,
+			@NonNull final QtyTU qtyTU,
+			@Nullable final HuPackingInstructionsItemId newLUPackingItem)
 	{
-		final List<I_M_HU> extractedTUs = HUTransformService.newInstance().tuToNewTUs(hu, QtyTU.ONE.toBigDecimal());
-		final I_M_HU extractedTU = CollectionUtils.singleElement(extractedTUs);
+		final I_M_HU hu = handlingUnitsBL.getById(aggregatedHuId);
+
+		if (!handlingUnitsBL.isAggregateHU(hu))
+		{
+			throw new AdempiereException("extractFromAggregatedByQrCode called for a non aggregated HU!")
+					.appendParametersToMessage()
+					.setParameter("huId", aggregatedHuId);
+		}
+
+		final Consumer<ImmutableSet<HuId>> propagateQRConsumer;
+		if (huQRCode != null)
+		{
+			if (!qrCodeConfigurationService.get().isOneQrCodeForAggregatedHUsEnabledFor(hu))
+			{
+				throw new AdempiereException("extractFromAggregatedByQrCode cannot be performed as OneQrCodeForAggregatedHUs is not enabled!")
+						.appendParametersToMessage()
+						.setParameter("huId", aggregatedHuId);
+			}
+
+			huQRCodesService.get().assertQRCodeAssignedToHU(huQRCode, aggregatedHuId);
+			propagateQRConsumer = (newHUIds) ->  huQRCodesService.get().assign(huQRCode, newHUIds);
+		}
+		else
+		{
+			propagateQRConsumer = (newHUIds) -> {};
+		}
+
+		if (newLUPackingItem != null)
+		{
+			final I_M_HU_PI_Item newLUPIItem = handlingUnitsBL.getPackingInstructionItemById(newLUPackingItem);
+			final List<I_M_HU> newLUs = tuToNewLUs(hu, qtyTU.toBigDecimal(), newLUPIItem, false);
+			final ImmutableSet<HuId> newAggreagtedHUIds = newLUs.stream()
+					.map(handlingUnitsDAO::retrieveIncludedHUs)
+					.flatMap(Collection::stream)
+					.map(I_M_HU::getM_HU_ID)
+					.map(HuId::ofRepoId)
+					.collect(ImmutableSet.toImmutableSet());
+			propagateQRConsumer.accept(newAggreagtedHUIds);
+			return newLUs.stream()
+					.map(I_M_HU::getM_HU_ID)
+					.map(HuId::ofRepoId)
+					.collect(ImmutableSet.toImmutableSet());
+		}
+		else
+		{
+			final ImmutableSet<HuId> splitHuIds = splitOutTUsFromAggregated(hu, qtyTU);
+			propagateQRConsumer.accept(splitHuIds);
+			return splitHuIds;
+		}
+	}
+
+	@NonNull
+	public HuId splitOutTU(@NonNull final I_M_HU hu)
+	{
+		final I_M_HU extractedTU = splitOutTURecord(hu);
 		return HuId.ofRepoId(extractedTU.getM_HU_ID());
 	}
+
+	@NonNull
+	public I_M_HU splitOutTURecord(@NonNull final I_M_HU hu)
+	{
+		final List<I_M_HU> extractedTUs = tuToNewTUs(hu, QtyTU.ONE.toBigDecimal());
+		return CollectionUtils.singleElement(extractedTUs);
+	}
+
+    @NonNull
+    private HuId splitOutTUFromAggregated(@NonNull final I_M_HU hu)
+    {
+        final Set<HuId> extractedTUIds = splitOutTUsFromAggregated(hu, QtyTU.ONE);
+        return CollectionUtils.singleElement(extractedTUIds);
+    }
+
+    @NonNull
+    private ImmutableSet<HuId> splitOutTUsFromAggregated(@NonNull final I_M_HU hu, @NonNull final QtyTU qtyTU)
+    {
+        final QtyTU availableNrOfTUs = handlingUnitsBL.getTUsCount(hu);
+        if (qtyTU.isGreaterThan(availableNrOfTUs))
+        {
+            throw new AdempiereException("Not enough TUs available!")
+                    .appendParametersToMessage()
+                    .setParameter("qtyTUToMove", qtyTU.toInt())
+                    .setParameter("availableQtyTU", availableNrOfTUs.toInt());
+        }
+
+        final List<I_M_HU> extractedTUs = HUTransformService.newInstance().tuToNewTUs(hu, qtyTU.toBigDecimal());
+        return extractedTUs.stream()
+                .map(I_M_HU::getM_HU_ID)
+                .map(HuId::ofRepoId)
+                .collect(ImmutableSet.toImmutableSet());
+    }
 
 	public HuId tusToNewLU(
 			@NonNull final List<I_M_HU> tusOrVhus,
@@ -1445,7 +1584,7 @@ public class HUTransformService
 			@NonNull final List<I_M_HU> tusOrVhus,
 			@Nullable final I_M_HU existingLU)
 	{
-		return tusToLU(tusOrVhus, existingLU, null);
+        return trxManager.callInThreadInheritedTrx(() ->tusToLU(tusOrVhus, existingLU, null));
 	}
 
 	private HuId tusToLU(
@@ -1484,4 +1623,59 @@ public class HUTransformService
 		return HuId.ofRepoId(lu.getM_HU_ID());
 	}
 
+    @NonNull
+    public ImmutableList<I_M_HU> cusToExistingTU(
+            @NonNull final List<I_M_HU> sourceCuHUs,
+            @NonNull final I_M_HU targetTuHU)
+    {
+        final ImmutableList.Builder<I_M_HU> resultCollector = ImmutableList.builder();
+        sourceCuHUs.forEach(sourceCU -> {
+            final Quantity quantity = getSingleProductStorage(sourceCU).getQtyInStockingUOM();
+            resultCollector.addAll(cuToExistingTU(sourceCU, quantity, targetTuHU));
+        });
+
+        return resultCollector.build();
+    }
+
+    public void cusToExistingCU(@NonNull final List<I_M_HU> sourceCuHUs, @NonNull final I_M_HU targetCU)
+    {
+        final ProductId targetHUProductId = getSingleProductStorage(targetCU).getProductId();
+
+        sourceCuHUs.forEach(sourceCU -> cuToExistingCU(sourceCU, targetCU, targetHUProductId));
+    }
+
+    public void cuToExistingCU(
+            @NonNull final I_M_HU sourceCuHU,
+            @NonNull final I_M_HU targetHU,
+            @NonNull final ProductId targetHUProductId)
+    {
+        trxManager.runInThreadInheritedTrx(() -> cuToExistingCU_InTrx(sourceCuHU, targetHU, targetHUProductId));
+    }
+
+    private void cuToExistingCU_InTrx(
+            @NonNull final I_M_HU sourceCuHU,
+            @NonNull final I_M_HU targetHU,
+            @NonNull final ProductId targetHUProductId)
+    {
+        final IMutableHUContext huContextWithOrgId = huContextFactory.createMutableHUContext(InterfaceWrapperHelper.getContextAware(targetHU));
+
+        final IAllocationSource source = HUListAllocationSourceDestination
+                .of(sourceCuHU, AllocationStrategyType.UNIFORM)
+                .setDestroyEmptyHUs(true);
+        final IAllocationDestination destination = HUListAllocationSourceDestination.of(targetHU, AllocationStrategyType.UNIFORM);
+
+        final IHUProductStorage sourceProductStorage = getSingleProductStorage(sourceCuHU);
+
+        Check.assume(sourceProductStorage.getProductId().equals(targetHUProductId), "Source and Target HU productId must match!");
+
+        HULoader.of(source, destination)
+                .load(AllocationUtils.builder()
+                        .setHUContext(huContextWithOrgId)
+                        .setDateAsToday()
+                        .setProduct(sourceProductStorage.getProductId())
+                        .setQuantity(sourceProductStorage.getQtyInStockingUOM())
+                        .setFromReferencedModel(sourceCuHU)
+                        .setForceQtyAllocation(true)
+                        .create());
+    }
 }

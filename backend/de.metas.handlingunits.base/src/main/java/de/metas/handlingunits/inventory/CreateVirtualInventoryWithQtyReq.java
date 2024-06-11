@@ -22,6 +22,8 @@
 
 package de.metas.handlingunits.inventory;
 
+import de.metas.contracts.FlatrateTermId;
+import de.metas.handlingunits.picking.job.model.PickingJobId;
 import de.metas.organization.OrgId;
 import de.metas.product.ProductId;
 import de.metas.quantity.Quantity;
@@ -39,24 +41,13 @@ import java.time.ZonedDateTime;
 @Builder
 public class CreateVirtualInventoryWithQtyReq
 {
-	@NonNull
-	WarehouseId warehouseId;
-
-	@NonNull
-    OrgId orgId;
-
-	@NonNull
-	ClientId clientId;
-
-	@NonNull
-	ProductId productId;
-
-	@NonNull
-	Quantity qty;
-
-	@NonNull
-	ZonedDateTime movementDate;
-
-	@Nullable
-	AttributeSetInstanceId attributeSetInstanceId;
+	@NonNull WarehouseId warehouseId;
+	@NonNull OrgId orgId;
+	@NonNull ClientId clientId;
+	@NonNull ProductId productId;
+	@NonNull Quantity qty;
+	@NonNull ZonedDateTime movementDate;
+	@Nullable AttributeSetInstanceId attributeSetInstanceId;
+	@Nullable PickingJobId pickingJobId;
+	@Nullable FlatrateTermId modularContractId;
 }

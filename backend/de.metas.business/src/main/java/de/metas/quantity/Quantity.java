@@ -43,7 +43,7 @@ import static java.math.BigDecimal.ZERO;
 public final class Quantity implements Comparable<Quantity>
 {
 	/**
-	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#create(BigDecimal, UomId)}.
+	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#of(BigDecimal, UomId)}.
 	 */
 	public static Quantity of(@NonNull final String qty, @NonNull final I_C_UOM uomRecord)
 	{
@@ -51,7 +51,7 @@ public final class Quantity implements Comparable<Quantity>
 	}
 
 	/**
-	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#create(BigDecimal, UomId)}.
+	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#of(BigDecimal, UomId)}.
 	 */
 	public static Quantity of(@NonNull final BigDecimal qty, @NonNull final I_C_UOM uomRecord)
 	{
@@ -69,7 +69,7 @@ public final class Quantity implements Comparable<Quantity>
 	}
 
 	/**
-	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#create(BigDecimal, UomId)}.
+	 * To create an instance an {@link UomId} instead of {@link I_C_UOM}, use {@link Quantitys#of(BigDecimal, UomId)}.
 	 */
 	public static Quantity of(final int qty, @NonNull final I_C_UOM uomRecord)
 	{
@@ -117,6 +117,15 @@ public final class Quantity implements Comparable<Quantity>
 			return ZERO;
 		}
 		return quantity.toBigDecimal();
+	}
+
+	public static int toUomRepoId(@Nullable final Quantity quantity)
+	{
+		if (quantity == null)
+		{
+			return -1;
+		}
+		return quantity.getUOM().getC_UOM_ID();
 	}
 
 	public static UomId getCommonUomIdOfAll(final Quantity... quantities)
@@ -210,7 +219,7 @@ public final class Quantity implements Comparable<Quantity>
 
 	@Override
 	@SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
-	public boolean equals(Object obj)
+	public boolean equals(final Object obj)
 	{
 		if (this == obj)
 		{
@@ -367,7 +376,7 @@ public final class Quantity implements Comparable<Quantity>
 	}
 
 	/**
-	 * If you don't have a {@link I_C_UOM} record, but an {@link UomId}, consider using {@link Quantitys#createZero(UomId)}.
+	 * If you don't have a {@link I_C_UOM} record, but an {@link UomId}, consider using {@link Quantitys#zero(UomId)}.
 	 *
 	 * @return ZERO quantity (using given UOM)
 	 */
@@ -822,15 +831,15 @@ public final class Quantity implements Comparable<Quantity>
 		return UOMType.ofNullableCodeOrOther(uom.getUOMType()).isWeight();
 	}
 
-	public Percent percentageOf(@NonNull Quantity whole)
+	public Percent percentageOf(@NonNull final Quantity whole)
 	{
 		assertSameUOM(this, whole);
 		return Percent.of(toBigDecimal(), whole.toBigDecimal());
 	}
 	
-	public void assertUOM(@NonNull final UomId uomId)
+	private void assertUOMOrSourceUOM(@NonNull final UomId uomId)
 	{
-		if (!getUomId().equals(uomId))
+		if (!getUomId().equals(uomId) && !getSourceUomId().equals(uomId))
 		{
 			throw new QuantitiesUOMNotMatchingExpection("UOMs are not compatible")
 					.appendParametersToMessage()
@@ -842,8 +851,8 @@ public final class Quantity implements Comparable<Quantity>
 	@NonNull
 	public BigDecimal toBigDecimalAssumingUOM(@NonNull final UomId uomId)
 	{
-		assertUOM(uomId);
+		assertUOMOrSourceUOM(uomId);
 		
-		return toBigDecimal();
+		return getUomId().equals(uomId) ? toBigDecimal() : getSourceQty();
 	}
 }

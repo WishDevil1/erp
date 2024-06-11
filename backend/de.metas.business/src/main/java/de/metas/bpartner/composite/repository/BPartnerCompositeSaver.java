@@ -47,6 +47,7 @@ import de.metas.util.Services;
 import de.metas.util.StringUtils;
 import de.metas.util.lang.ExternalId;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import org.adempiere.ad.dao.ICompositeQueryUpdater;
 import org.adempiere.ad.dao.IQueryBL;
 import org.adempiere.ad.dao.IQueryBuilder;
@@ -99,6 +100,7 @@ import static org.compiere.model.X_AD_User.ISINVOICEEMAILENABLED_Yes;
  * #L%
  */
 
+@RequiredArgsConstructor
 final class BPartnerCompositeSaver
 {
 	private final IQueryBL queryBL = Services.get(IQueryBL.class);
@@ -108,13 +110,6 @@ final class BPartnerCompositeSaver
 	private final IBPartnerBL bpartnerBL;
 	private final BPartnerCreditLimitRepository bPartnerCreditLimitRepository;
 
-	BPartnerCompositeSaver(
-			@NonNull final IBPartnerBL bpartnerBL,
-			@NonNull final BPartnerCreditLimitRepository bPartnerCreditLimitRepository)
-	{
-		this.bpartnerBL = bpartnerBL;
-		this.bPartnerCreditLimitRepository = bPartnerCreditLimitRepository;
-	}
 
 	/**
 	 * @param validatePermissions Use-Case for {@code false}: when transferring a customer to another org, the user who does the transfer might not have access to the target-org.
@@ -248,19 +243,19 @@ final class BPartnerCompositeSaver
 		bpartnerRecord.setReferrer(bpartner.getReferrer());
 		bpartnerRecord.setMKTG_Campaign_ID(CampaignId.toRepoId(bpartner.getCampaignId()));
 
-		if(bpartner.getPaymentRule() != null)
+		if (bpartner.getPaymentRule() != null)
 		{
 			bpartnerRecord.setPaymentRule(bpartner.getPaymentRule().getCode());
 		}
-		if(bpartner.getPaymentRulePO() != null)
+		if (bpartner.getPaymentRulePO() != null)
 		{
 			bpartnerRecord.setPaymentRulePO(bpartner.getPaymentRulePO().getCode());
 		}
-		if(bpartner.getSoDocTypeTargetId() != null)
+		if (bpartner.getSoDocTypeTargetId() != null)
 		{
 			bpartnerRecord.setSO_DocTypeTarget_ID(DocTypeId.toRepoId(bpartner.getSoDocTypeTargetId()));
 		}
-		if(bpartner.getFirstName() != null)
+		if (bpartner.getFirstName() != null)
 		{
 			bpartnerRecord.setFirstname(bpartner.getFirstName());
 		}
@@ -409,53 +404,30 @@ final class BPartnerCompositeSaver
 	{
 		if (bpartnerLocation.isAddressSpecifiedByExistingLocationIdOnly())
 		{
-			final LocationId existingLocationId = Check.assumeNotNull(
-					bpartnerLocation.getExistingLocationId(),
-					"existingLocationId not null: {}", bpartnerLocation);
-
-			final I_C_Location existingLocationRecord = locationDAO.getById(existingLocationId);
+			final I_C_Location existingLocationRecord = locationDAO.getById(bpartnerLocation.getExistingLocationIdNotNull());
 			return BPartnerCompositesLoader.toBPartnerLocationAddressPart(
-					existingLocationRecord,
-					locationDAO,
-					countryDAO);
-		}
-
-		final BPartnerLocationAddressPart oldAddress;
-		if (bpartnerLocation.getExistingLocationId() != null)
-		{
-			final I_C_Location existingLocationRecord = locationDAO.getById(bpartnerLocation.getExistingLocationId());
-			oldAddress = BPartnerCompositesLoader.toBPartnerLocationAddressPart(
 					existingLocationRecord,
 					locationDAO,
 					countryDAO);
 		}
 		else
 		{
-			oldAddress = null;
+			return createOrReuseLocationRecord(bpartnerLocation.toAddress());
 		}
-
-		BPartnerLocationAddressPart newAddress = bpartnerLocation.toAddress();
-		if (oldAddress == null || !BPartnerLocationAddressPart.equals(oldAddress, newAddress))
-		{
-			newAddress = createNewLocationRecord(newAddress);
-		}
-
-		return newAddress;
 	}
 
-	private BPartnerLocationAddressPart createNewLocationRecord(@NonNull final BPartnerLocationAddressPart address)
+	private BPartnerLocationAddressPart createOrReuseLocationRecord(@NonNull final BPartnerLocationAddressPart address)
 	{
 		final LocationCreateRequest.LocationCreateRequestBuilder requestBuilder = LocationCreateRequest.builder()
+				.existingLocationId(address.getExistingLocationId())
 				.address1(address.getAddress1())
 				.address2(address.getAddress2())
 				.address3(address.getAddress3())
 				.address4(address.getAddress4());
 
-		if (address.getCountryCode() != null && !isBlank(address.getCountryCode()))
-		{
-			final CountryId countryId = countryDAO.getCountryIdByCountryCode(address.getCountryCode());
-			requestBuilder.countryId(countryId);
-		}
+		StringUtils.trimBlankToOptional(address.getCountryCode())
+				.map(countryDAO::getCountryIdByCountryCode)
+				.ifPresent(requestBuilder::countryId);
 
 		boolean postalDataSetFromPostalRecord = false;
 		final I_C_Postal postalRecord = retrievePostal(address);
@@ -479,7 +451,7 @@ final class BPartnerCompositeSaver
 
 		requestBuilder.poBox(address.getPoBox());
 
-		final LocationId newLocationId = locationDAO.createLocation(requestBuilder.build());
+		final LocationId newLocationId = locationDAO.createOrReuseLocation(requestBuilder.build());
 		return address.withExistingLocationId(newLocationId);
 	}
 
@@ -629,7 +601,7 @@ final class BPartnerCompositeSaver
 
 			bpartnerContactRecord.setIsInvoiceEmailEnabled(invoiceEmailEnabled);
 
-			bpartnerContactRecord.setC_Greeting_ID(GreetingId.toRepoIdOr(bpartnerContact.getGreetingId(), 0));
+			bpartnerContactRecord.setC_Greeting_ID(GreetingId.toRepoId(bpartnerContact.getGreetingId()));
 			bpartnerContactRecord.setC_Title_ID(TitleId.toRepoIdOr(bpartnerContact.getTitleId(), 0));
 
 			bpartnerContactRecord.setAD_Org_Mapping_ID(OrgMappingId.toRepoId(bpartnerContact.getOrgMappingId()));
