@@ -51,6 +51,7 @@ import de.metas.pricing.service.UpdateProductPriceRequest;
 import de.metas.product.ProductId;
 import de.metas.tax.api.TaxCategoryId;
 import de.metas.user.UserId;
+import de.metas.util.Check;
 import de.metas.util.NumberUtils;
 import de.metas.util.Services;
 import lombok.NonNull;
@@ -299,7 +300,10 @@ public class PriceListDAO implements IPriceListDAO
 	}
 
 	@Override
-	public List<I_M_PriceList> retrievePriceLists(final PricingSystemId pricingSystemId, final CountryId countryId, final SOTrx soTrx)
+	public List<I_M_PriceList> retrievePriceLists(
+			@NonNull final PricingSystemId pricingSystemId, 
+			@NonNull final CountryId countryId, 
+			@Nullable final SOTrx soTrx)
 	{
 		return retrievePriceListsCollectionByPricingSystemId(pricingSystemId)
 				.filterAndList(countryId, soTrx);
